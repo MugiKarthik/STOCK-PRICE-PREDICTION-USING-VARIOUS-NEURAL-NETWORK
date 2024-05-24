@@ -1,0 +1,1233 @@
+# Actual goal of this project:
+# 1. Not to beat any research paper model
+# 2. But to emphasize that neural network can do
+# better prediction than traditional models and
+# explain why??
+# 
+# Done:
+# 1. Data Collection
+# 2. Data Preprocessing
+# 3. EDA
+# 4. LSTM,GRU,RNN,CNN,Bi-LSTM
+# 5. MA,EMA
+# 6. ARIMA
+# 7. Fbprophet
+# 8. Time series analysis (Optional-Trend,Seasonality Decomp)
+# 9. Comparing the rmse
+# 10. Tuning best model
+# 11. Forecast the values for next 30 days using the best model
+# 
+# 
+
+# In[ ]:
+
+
+#To get arima and prophet forecasts
+# !pip install pmdarima
+# !pip install prophet
+
+
+# # Importing necessary libraries
+
+# In[ ]:
+
+
+import yfinance as yf
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense
+from tensorflow.keras.layers import SimpleRNN,Input,LSTM,GRU,Bidirectional,Concatenate
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.arima_model import ARIMA
+from pmdarima.arima import auto_arima
+import math
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+
+# # Data Collection
+
+# In[ ]:
+
+
+yf.pdr_override()
+data = yf.download("TCS.NS")
+
+
+# In[ ]:
+
+
+# data.to_csv("TCS.csv")
+
+
+# In[ ]:
+
+
+# data = pd.read_csv("TCS.csv")
+
+
+# In[ ]:
+
+
+data.head(5)
+
+
+# In[ ]:
+
+
+data.tail(5)
+
+
+# ## Data Preprocessing
+
+# Data cleaning
+
+# In[ ]:
+
+
+data.shape
+
+
+# In[ ]:
+
+
+data.isna().sum()
+
+
+# No missing values present in the data
+
+# ### EDA
+
+# In[ ]:
+
+
+# data = data.set_index("Date")
+
+
+# In[ ]:
+
+
+data.describe()
+
+
+# In[ ]:
+
+
+data["High"].plot(xlim = ["2023-01-01","2024-01-31"] ,figsize = (12,4),c = "green")
+
+
+# In[ ]:
+
+
+index = data.loc["2023-01-01":"2024-01-31"].index
+share_open = data.loc["2023-01-01":"2024-01-31"]["Open"]
+
+
+# In[ ]:
+
+
+fig,axs = plt.subplots()
+plt.tight_layout()
+fig.autofmt_xdate()
+axs.plot(index,share_open)
+
+
+# In[ ]:
+
+
+data.reset_index().info()
+
+
+# In[ ]:
+
+
+#Year End Frequency
+data.resample(rule = "A").max()["Volume"].plot(figsize = (12,8))
+
+
+# In[ ]:
+
+
+#Quarterly Frequency
+data.resample(rule = "QS").max()["High"].plot()
+
+
+# In[ ]:
+
+
+##Business end freq
+data.resample(rule = "BA").max()["Volume"].plot()
+
+
+# In[ ]:
+
+
+#Business Quarterly End Freq
+data.resample(rule = "BQS").max()
+
+
+# In[ ]:
+
+
+data["Open"].resample(rule = "BA").mean().plot(kind = "bar")
+
+
+# In[ ]:
+
+
+data.loc["2023-01-01":"2024-03-01"]["Open"].resample(rule = "M").mean().plot(kind = "barh",figsize = (15,6))
+plt.xlabel("Stock price open")
+
+
+# Moving Average
+
+# 1. simple moving average
+
+# In[ ]:
+
+
+##for close price
+data["Rolling_close"] = data["Close"].rolling(10).mean()
+
+
+# In[ ]:
+
+
+data[["Close","Rolling_close"]].plot(figsize = (20,8))
+
+
+# 2. Exponential moving average
+
+# In[ ]:
+
+
+data["Ema_close"] = data["Close"].ewm(alpha = 0.5,adjust = False).mean()
+data["Ewma_close"] = data["Close"].ewm(span = 10).mean()
+data[["Close","Ema_close","Ewma_close"]].plot(figsize = (12,8))
+# plt.xlim(["2020-01-01","2024-03-01"])
+
+
+# In[ ]:
+
+
+data = data.reset_index()
+data.head()
+
+
+# # Feature selection
+
+# In[ ]:
+
+
+df = data["Close"]
+df.head(5)
+
+
+# Train Test split: Try to scale all data
+
+# In[ ]:
+
+
+##splitting dataset into train and test split
+training_size=int(len(df)*0.7)
+test_size=len(df)-training_size
+train_data,test_data=df[0:training_size],df[training_size:len(df)]
+
+
+# In[ ]:
+
+
+len(train_data),len(test_data)
+
+
+# In[ ]:
+
+
+plt.plot(train_data,color = "red")
+plt.plot(test_data,color = "blue")
+
+
+# In[ ]:
+
+
+train_data.values.reshape(-1,1)
+
+
+# Feature Scaling
+
+# In[ ]:
+
+
+# Data preprocessing
+scaler = MinMaxScaler(feature_range=(0, 1))
+train_data = scaler.fit_transform(np.array(train_data).reshape(-1,1))
+
+
+# In[ ]:
+
+
+test_data = scaler.transform(np.array(test_data).reshape(-1,1))
+
+
+# In[ ]:
+
+
+train_data,test_data
+
+
+# Creating sequential data of 50 days
+
+# In[ ]:
+
+
+# Function to create sequences for time series prediction
+def create_sequences(data, seq_length):
+    sequences = []
+    target = []
+    for i in range(len(data) - seq_length-1):
+        seq = data[i:i+seq_length,0]
+        label = data[i+seq_length,0]
+        sequences.append(seq)
+        target.append(label)
+    return np.array(sequences), np.array(target)
+
+
+# In[ ]:
+
+
+#Time stamps/seq_length
+t = 50
+X_train,y_train = create_sequences(train_data,t)
+X_test,y_test = create_sequences(test_data,t)
+
+
+# In[ ]:
+
+
+X_train.shape,y_train.shape
+
+
+# In[ ]:
+
+
+X_test.shape,y_test.shape
+
+
+# Reshaping the data
+
+# In[ ]:
+
+
+X_train = X_train.reshape(X_train.shape[0],X_train.shape[1],1)
+X_test = X_test.reshape(X_test.shape[0],X_test.shape[1],1)
+X_train.shape,X_test.shape
+
+
+# # Neural Network models
+
+# ## Model Building
+
+# ### CNN
+
+# In[ ]:
+
+
+# Define the CNN model
+i = Input(shape = (X_train.shape[1],1))
+x = Conv1D(filters = 32,kernel_size = 3,activation = "relu")(i)
+x = Flatten()(x)
+x = Dense(1)(x)
+cnn_model = Model(i,x)
+
+# Compile the model
+cnn_model.compile(optimizer='adam', loss='mean_squared_error')
+cnn_model.summary()
+
+
+# In[ ]:
+
+
+# Train the model
+cnn_model.fit(X_train, y_train, epochs=100,validation_data=(X_test, y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=cnn_model.predict(X_train)
+test_predict=cnn_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+cnn_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+cnn_rmse
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:, :] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back, :] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+# # shift train predictions for plotting
+# look_back=50
+# trainPredictPlot = np.empty_like(df).reshape(-1,1)
+# trainPredictPlot[:,:] = np.nan
+# trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# # shift test predictions for plotting
+# testPredictPlot = np.empty_like(df).reshape(-1,1)
+# testPredictPlot[:, :] = np.nan
+# testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# # plot baseline and predictions
+# plt.plot(df)
+# plt.plot(trainPredictPlot)
+# plt.plot(testPredictPlot)
+# plt.show()
+
+
+# ### RNN
+
+# In[ ]:
+
+
+#Model building:
+i = Input(shape = (X_train.shape[1],1))
+x = SimpleRNN(32,activation = "relu")(i)
+x = Dense(1)(x)
+rnn_model = Model(i,x)
+rnn_model.compile(optimizer = "adam",loss = "mse")
+rnn_model.summary()
+
+
+# In[ ]:
+
+
+r = rnn_model.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=rnn_model.predict(X_train)
+test_predict=rnn_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+rnn_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# In[ ]:
+
+
+df
+
+
+# ### LSTM
+
+# In[ ]:
+
+
+#Model building:
+i = Input(shape = (X_train.shape[1],1))
+x = LSTM(32)(i)
+x = Dense(1)(x)
+lstm_model = Model(i,x)
+lstm_model.compile(optimizer = "adam",loss = "mse")
+lstm_model.summary()
+
+
+# In[ ]:
+
+
+r = lstm_model.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=lstm_model.predict(X_train)
+test_predict=lstm_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+lstm_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# ### GRU
+
+# In[ ]:
+
+
+#Model building:
+i = Input(shape = (X_train.shape[1],1))
+x = GRU(32)(i)
+x = Dense(1)(x)
+gru_model = Model(i,x)
+gru_model.compile(optimizer = "adam",loss = "mse")
+gru_model.summary()
+
+
+# In[ ]:
+
+
+r = gru_model.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=gru_model.predict(X_train)
+test_predict=gru_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+gru_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# ### Bi-LSTM
+
+# In[ ]:
+
+
+#Model building:
+i = Input(shape = (X_train.shape[1],1))
+x = Bidirectional(LSTM(64))(i)
+x = Dense(1)(x)
+bi_lstm_model = Model(i,x)
+bi_lstm_model.compile(optimizer = "adam",loss = "mse")
+bi_lstm_model.summary()
+
+
+# In[ ]:
+
+
+r = bi_lstm_model.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=bi_lstm_model.predict(X_train)
+test_predict=bi_lstm_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+bi_lstm_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# ### Combining different networks for model
+
+# In[ ]:
+
+
+#Model building:
+i = Input(shape = (X_train.shape[1],1))
+x_bi = Bidirectional(LSTM(32))(i)
+x_l = LSTM(32)(i)
+x = Concatenate()([x_bi,x_l])
+x = Dense(1)(x)
+combined_model = Model(i,x)
+combined_model.compile(optimizer = "adam",loss = "mse")
+combined_model.summary()
+
+
+# In[ ]:
+
+
+r = combined_model.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=combined_model.predict(X_train)
+test_predict=combined_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+combined_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# 
+# ### Stacked LSTM approach
+
+# In[ ]:
+
+
+i = Input(shape = (X_train.shape[1],1))
+x = LSTM(50,return_sequences=True)(i)
+x = LSTM(50,return_sequences=True)(x)
+x = LSTM(50)(x)
+x = Dense(1)(x)
+stacked_lstm_model=Model(i,x)
+stacked_lstm_model.compile(loss='mean_squared_error',optimizer='adam')
+stacked_lstm_model.summary()
+
+
+# In[ ]:
+
+
+r = stacked_lstm_model.fit(X_train, y_train, epochs=100,validation_data=(X_test, y_test),batch_size=64,verbose=1)
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=stacked_lstm_model.predict(X_train)
+test_predict=stacked_lstm_model.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+
+
+# In[ ]:
+
+
+### Calculate RMSE performance metrics
+import math
+from sklearn.metrics import mean_squared_error
+math.sqrt(mean_squared_error(scaler.inverse_transform(y_train.reshape(-1,1)),train_predict))
+
+
+# In[ ]:
+
+
+### Test Data RMSE
+st_lstm_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+st_lstm_rmse
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:, :] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back, :] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+# # shift train predictions for plotting
+# look_back=50
+# trainPredictPlot = np.empty_like(df).reshape(-1,1)
+# trainPredictPlot[:,:] = np.nan
+# trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# # shift test predictions for plotting
+# testPredictPlot = np.empty_like(df).reshape(-1,1)
+# testPredictPlot[:, :] = np.nan
+# testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# # plot baseline and predictions
+# plt.plot(df)
+# plt.plot(trainPredictPlot)
+# plt.plot(testPredictPlot)
+# plt.show()
+
+
+# # Time series Models
+# 
+
+# ## ARIMA Model
+
+# In[ ]:
+
+
+df_close = data["Close"]
+df_close.plot(kind = "kde")
+
+
+# In[ ]:
+
+
+# ADF Test
+#Its not stationary data
+from statsmodels.tsa.stattools import adfuller
+def adf_test(series):
+  result = adfuller(series)
+  print(f"ADF statistics: {result[0]}")
+  print(f"P-Value : {result[1]}")
+  if result[1]<=0.05:
+    print("Reject null hypothesis, time series has no unit root , data is stationary")
+  else:
+    print("Fail to reject null hypothesis, time series has unit root, data is not stationary")
+adf_test(df_close)
+
+
+# In[ ]:
+
+
+# Perform seasonal decomposition
+result = seasonal_decompose(df_close, period=30, model='multiplicative')
+
+# Plot the decomposed components
+fig, axs = plt.subplots(3, 1, figsize=(12, 8))
+
+# Plot the trend component
+result.trend.plot(ax=axs[0], label='Trend')
+axs[0].set_title('Trend Component')
+
+# Plot the seasonal component
+result.seasonal.plot(ax=axs[1], label='Seasonality')
+axs[1].set_title('Seasonal Component')
+
+# Plot the residual component
+result.resid.plot(ax=axs[2], label='Residuals')
+axs[2].set_title('Residual Component')
+
+plt.tight_layout()
+plt.show()
+
+
+# In[ ]:
+
+
+from pylab import rcParams
+rcParams["figure.figsize"] = 20,10
+df_close_log = np.log(df_close)
+df_close_diff = df_close.diff().dropna()
+ma = df_close.rolling(12).mean()
+stationary_close = df_close_log - ma
+stationary_close.dropna(inplace = True)
+adf_test(df_close_diff)
+
+
+# In[ ]:
+
+
+df_close_diff.plot()
+
+
+# In[ ]:
+
+
+#split data into train and training set
+train_data, test_data = df_close_diff[:int(len(df_close_diff)*0.8)], df_close_diff[int(len(df_close_diff)*0.8):]
+plt.figure(figsize=(10,6))
+plt.grid(True)
+plt.xlabel('Dates')
+plt.ylabel('Closing Prices')
+plt.plot(df_close_diff, 'green', label='Train data')
+plt.plot(test_data, 'blue', label='Test data')
+plt.legend()
+
+
+# In[ ]:
+
+
+#Modeling
+# Build Model
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(train_data, order=(1,0,1))
+fitted = model.fit()
+print(fitted.summary())
+
+
+# In[ ]:
+
+
+test_data.shape
+
+
+# In[ ]:
+
+
+rmse = math.sqrt(mean_squared_error(test_data,forecast))
+print(f"RMSE: ",{rmse})
+
+
+# In[ ]:
+
+
+forecast = fitted.forecast(1074,alpha = 0.05)
+forecast_values = []
+last_obs = df_close.iloc[-1]
+for val in forecast:
+  forecast_value = last_obs+val
+  forecast_values.append(forecast_value)
+  last_obs = forecast_value
+
+
+# In[ ]:
+
+
+df_close_diff.shape
+
+
+# In[ ]:
+
+
+(5367-1074)
+
+
+# In[ ]:
+
+
+len(df_close.iloc[4294:])
+
+
+# In[ ]:
+
+
+forecast_df = pd.DataFrame(forecast_values,index = df_close.iloc[4294:].index)
+forecast_df
+
+
+# In[ ]:
+
+
+plt.plot(df_close.iloc[:4294],color="blue")
+plt.plot(df_close.iloc[4294:],color="red")
+plt.plot(forecast_df,color="black")
+
+
+# ## FbProphet
+
+# In[ ]:
+
+
+close_data = df_close.reset_index()
+close_data = close_data.rename(columns = {"Date":"ds","Close":"y"})
+close_data.head()
+
+
+# In[ ]:
+
+
+get_ipython().system('pip install prophet')
+import prophet
+
+
+# In[ ]:
+
+
+from prophet import Prophet
+m = Prophet(daily_seasonality = True)
+m.fit(close_data)
+future = m.make_future_dataframe(periods=365) #we need to specify the number of days in future
+prediction = m.predict(future)
+m.plot(prediction)
+plt.title("Prediction of the Tesla Stock Price using the Prophet")
+plt.xlabel("Date")
+plt.ylabel("Close Stock Price")
+plt.show()
+
+
+# In[ ]:
+
+
+m.plot_components(prediction)
+
+
+# # Model evaluation
+
+# In[ ]:
+
+
+##Getting all RMSE values and Comparing them
+rmse_data = pd.DataFrame({"Models":["CNN","RNN","LSTM","GRU","Bi-LSTM","Combined Model(LSTM+Bi-LSTM)"],"RootMeanSquareError":[cnn_rmse,rnn_rmse,lstm_rmse,gru_rmse,bi_lstm_rmse,combined_rmse]})
+rmse_data
+
+
+# ### Best Model Found to be: **Convolutional neural network(CNN) 1-D**
+
+# # Fine tuning
+
+# In[ ]:
+
+
+#Hyperparameter tuning
+from tensorflow.keras.optimizers import Adam
+# Define the CNN model
+i = Input(shape = (X_train.shape[1],1))
+x = Conv1D(filters = 32,kernel_size = 3,activation = "relu")(i)
+x = Flatten()(x)
+x = Dense(1)(x)
+cnn_model_up = Model(i,x)
+
+# Compile the model
+cnn_model_up.compile(optimizer=Adam(learning_rate = 0.01), loss='mean_squared_error')
+cnn_model_up.summary()
+
+
+# In[ ]:
+
+
+r = cnn_model_up.fit(X_train,y_train,epochs = 100,validation_data = (X_test,y_test))
+
+
+# In[ ]:
+
+
+#Model prediction
+train_predict=cnn_model_up.predict(X_train)
+test_predict=cnn_model_up.predict(X_test)
+##Transformback to original form
+train_predict=scaler.inverse_transform(train_predict)
+test_predict=scaler.inverse_transform(test_predict)
+cnn_updated_rmse = math.sqrt(mean_squared_error(scaler.inverse_transform(y_test.reshape(-1,1)),test_predict))
+cnn_updated_rmse
+
+
+# In[ ]:
+
+
+### Plotting
+# shift train predictions for plotting
+look_back=50
+trainPredictPlot = np.empty_like(df).reshape(-1,1)
+trainPredictPlot[:,:] = np.nan
+trainPredictPlot[look_back:len(train_predict)+look_back,:] = train_predict
+# shift test predictions for plotting
+testPredictPlot = np.empty_like(df).reshape(-1,1)
+testPredictPlot[:, :] = np.nan
+testPredictPlot[len(train_predict)+(look_back*2)+1:len(df)-1, :] = test_predict
+# plot baseline and predictions
+plt.plot(df)
+plt.plot(df.index,trainPredictPlot)
+plt.plot(df.index,testPredictPlot)
+plt.show()
+
+
+# ### After experimenting with various activation functions and learning rates our cnn model performs better with
+# 1. Learning Rate 0.01
+# 2. Activation Function: Relu
+# 3. Optimizer: Adam
+
+# # Forecasting for next 30 days using upgraded cnn model
+
+# In[ ]:
+
+
+#Loading our model
+cnn_load = tf.keras.models.load_model("/content/cnnModelForStockPrice.h5")
+
+
+# In[ ]:
+
+
+len(test_data)
+
+
+# In[ ]:
+
+
+##Taking previous 50 days for future forecast
+x_input = test_data[1561:].reshape(1,-1)
+x_input.shape
+temp_input=list(x_input)
+temp_input=temp_input[0].tolist()
+# temp_input
+
+
+# In[ ]:
+
+
+# demonstrate prediction for next 30 days
+lst_output=[]
+n_steps=50
+i=0
+while(i<365):
+
+    if(len(temp_input)>50):
+        #print(temp_input)
+        x_input=np.array(temp_input[1:])
+        # print("{} day input {}".format(i,x_input))
+        x_input=x_input.reshape(1,-1)
+        x_input = x_input.reshape((1, n_steps, 1))
+        #print(x_input)
+        yhat = cnn_load.predict(x_input, verbose=0)
+        # print("{} day output {}".format(i,yhat))
+        temp_input.extend(yhat[0].tolist())
+        temp_input=temp_input[1:]
+        #print(temp_input)
+        lst_output.extend(yhat.tolist())
+        i=i+1
+    else:
+        x_input = x_input.reshape((1, n_steps,1))
+        yhat = cnn_load.predict(x_input, verbose=0)
+        print(yhat[0])
+        temp_input.extend(yhat[0].tolist())
+        print(len(temp_input))
+        lst_output.extend(yhat.tolist())
+        i=i+1
+
+
+# print(lst_output)
+
+
+# In[ ]:
+
+
+day_new=np.arange(1,51)
+day_pred=np.arange(51,81)
+
+
+# In[ ]:
+
+
+len(df)
+
+
+# In[ ]:
+
+
+5368-50
+
+
+# In[ ]:
+
+
+df3=df.tolist()
+plt.plot(df3)
+
+
+# In[ ]:
+
+
+# print(scaler.inverse_transform(lst_output).reshape(-1,1))
+lst_output = scaler.inverse_transform(lst_output)
+
+
+# In[ ]:
+
+
+forecast_lst = [i[0] for i in lst_output]
+df3.extend(forecast_lst)
+
+
+# In[ ]:
+
+
+plt.plot(df3)
+plt.figure(figsize = (20,8));
+
+
+# # Saving the best model
+
+# In[ ]:
+
+
+cnn_model_up.save("cnnModelForStockPrice.h5")
+
+
+# # **End**
